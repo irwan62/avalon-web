@@ -1,0 +1,355 @@
+
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AVALON — Minecraft Edition</title>
+<style>
+:root{--bg:#10131e;--panel:#1b2030;--gold:#e7c66b;--text:#f3f4f8;--muted:#aab1c5;--good:#58c99a;--evil:#ff647c}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(ellipse at top,#252d49,#10131e 65%);color:var(--text);font:15px/1.5 system-ui,sans-serif;min-height:100vh}
+.wrap{max-width:950px;margin:auto;padding:16px}
+.hero{text-align:center;padding:20px 8px}
+.hero h1{font-size:clamp(34px,8vw,54px);margin:4px;color:var(--gold)}
+.eyebrow{letter-spacing:.18em;color:var(--gold);font-size:11px;font-weight:bold}
+.panel{background:#1b2030;border:1px solid #3a435c;border-radius:16px;padding:17px;margin:12px 0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+label.field{display:block;color:var(--muted);font-size:13px}
+input,select{width:100%;padding:12px;border-radius:9px;border:1px solid #46506b;background:#111625;color:white;font:inherit;margin-top:5px}
+.btn{padding:12px 15px;border:0;border-radius:10px;background:var(--gold);color:#201b0d;font-weight:bold;cursor:pointer}
+.btn.secondary{background:#343d56;color:white}
+.btn.danger{background:#a83d53;color:white}
+.btn:disabled{opacity:.4}
+.actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.status,.rolebox{padding:13px;border-radius:11px;background:#111625;border-left:4px solid var(--gold);margin:12px 0}
+.rolebox{border:1px solid #46506b}
+.rolebox strong{color:var(--gold);font-size:20px}
+.players{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.player{padding:11px;background:#111625;border:1px solid #3c455e;border-radius:10px}
+.player.selected{border-color:var(--gold)}
+.player input{width:auto;margin-right:7px}
+.pill{display:inline-block;padding:4px 8px;border-radius:20px;font-size:11px;font-weight:bold}
+.good{background:#183d34;color:#76e0b5}
+.evil{background:#4a202b;color:#ff8da0}
+.rounds{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.round{padding:9px 3px;text-align:center;background:#111625;border:1px solid #39435d;border-radius:9px;font-size:12px}
+.round b{display:block;font-size:16px}
+.round.active{border-color:var(--gold)}
+.round.success{border-color:var(--good)}
+.round.fail{border-color:var(--evil)}
+.vote-row{display:flex;gap:8px}
+.vote-row button{flex:1}
+.footer{text-align:center;color:var(--muted);font-size:12px;padding:20px}
+@media(max-width:550px){.grid{grid-template-columns:1fr}.panel{padding:13px}.wrap{padding:10px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="hero">
+<div class="eyebrow">SOCIAL DEDUCTION • MISSION • BETRAYAL</div>
+<h1>AVALON</h1>
+<p class="muted">Minecraft-inspired party game</p>
+</header>
+
+<section class="panel" id="setup">
+<h2>Buat Permainan</h2>
+<p class="muted">Mainkan secara bergiliran pada satu perangkat. Setiap pemain melihat perannya secara pribadi.</p>
+<div class="grid">
+<label class="field">Jumlah pemain
+<select id="playerCount">
+<option>5</option><option>6</option><option selected>7</option>
+<option>8</option><option>9</option><option>10</option>
+</select></label>
+<label class="field">Nama pemain, pisahkan dengan koma
+<input id="names" placeholder="Irwan, Dio, Rangga, ...">
+</label>
+</div>
+<div class="actions">
+<button class="btn" id="startBtn">Mulai Permainan</button>
+<button class="btn secondary" id="rulesBtn">Lihat Aturan</button>
+</div>
+<div id="rules" class="status hidden">
+<b>Aturan singkat</b>
+<ul>
+<li>Raja memilih anggota tim misi.</li>
+<li>Semua pemain melakukan voting setuju atau tolak.</li>
+<li>Tim yang disetujui menjalankan misi secara rahasia.</li>
+<li>Kubu baik menang setelah 3 misi berhasil, kecuali Assassin menebak Merlin dengan benar.</li>
+<li>Kubu jahat menang setelah 3 misi gagal.</li>
+<li>Misi keempat membutuhkan 2 sabotase untuk gagal.</li>
+<li>Lima penolakan tim berturut-turut membuat kubu jahat menang.</li>
+</ul>
+</div>
+</section>
+
+<section class="panel hidden" id="game">
+<div class="eyebrow">STATUS PERMAINAN</div>
+<h2 id="phaseTitle"></h2>
+<p class="muted" id="phaseDesc"></p>
+<div id="roleReveal" class="rolebox hidden"></div>
+<div id="mainArea"></div>
+<div class="status" id="scoreArea"></div>
+<button class="btn secondary" id="restartBtn">Mulai Ulang</button>
+</section>
+<div class="footer">Avalon — fan-made browser game</div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const missionSizes=[3,4,4,4,4];
+const sabotageNeeded=[1,1,1,2,1];
+let G=null;
+
+function shuffle(a){
+ a=[...a];
+ for(let i=a.length-1;i>0;i--){
+  let j=Math.floor(Math.random()*(i+1));
+  [a[i],a[j]]=[a[j],a[i]];
+ }
+ return a;
+}
+
+// RAJA BERGILIR BERURUTAN
+function nextLeader(previous){
+ return (previous+1)%G.n;
+}
+
+function roleCounts(n){
+ const evil={5:2,6:2,7:3,8:3,9:3,10:4}[n];
+ return {good:n-evil,evil};
+}
+
+function makeRoles(n){
+ const c=roleCounts(n);
+ let evilRoles=['Assassin','Morgana'];
+ if(c.evil>=3)evilRoles.push('Mordred');
+ if(c.evil>=4)evilRoles.push('Minion of Mordred');
+ let goodRoles=['Merlin'];
+ if(n>=7)goodRoles.push('Percival');
+ while(goodRoles.length<c.good)goodRoles.push('Loyal Servant');
+ return shuffle([...goodRoles,...evilRoles]);
+}
+
+const roleInfo={
+'Merlin':{team:'good',desc:'Kamu kubu BAIK. Kamu mengetahui pemain jahat, kecuali Mordred. Jangan sampai identitasmu diketahui Assassin.'},
+'Percival':{team:'good',desc:'Kamu kubu BAIK. Kamu melihat Merlin dan Morgana sebagai dua kandidat.'},
+'Loyal Servant':{team:'good',desc:'Kamu kubu BAIK tanpa kemampuan khusus. Bantu tim melalui diskusi dan voting.'},
+'Assassin':{team:'evil',desc:'Kamu kubu JAHAT. Jika kubu baik menyelesaikan 3 misi, tebak Merlin untuk mencuri kemenangan.'},
+'Morgana':{team:'evil',desc:'Kamu kubu JAHAT. Kamu terlihat seperti Merlin bagi Percival.'},
+'Mordred':{team:'evil',desc:'Kamu kubu JAHAT. Merlin tidak dapat melihat identitasmu.'},
+'Minion of Mordred':{team:'evil',desc:'Kamu kubu JAHAT tanpa kemampuan khusus tambahan.'}
+};
+
+function startGame(){
+ let n=+$('playerCount').value;
+ let names=$('names').value.split(',').map(x=>x.trim()).filter(Boolean);
+ while(names.length<n)names.push('Pemain '+(names.length+1));
+ names=names.slice(0,n);
+ if(new Set(names).size<n){
+  alert('Gunakan nama yang berbeda untuk setiap pemain.');
+  return;
+ }
+ let roles=makeRoles(n);
+ G={
+  players:names.map((name,i)=>({name,role:roles[i]})),
+  n,round:0,leader:0,success:0,fail:0,rejections:0,
+  missionResults:[],phase:'reveal',revealIndex:0,
+  team:[],votes:[],missionVotes:[],history:[]
+ };
+ $('setup').classList.add('hidden');
+ $('game').classList.remove('hidden');
+ render();
+}
+
+function esc(s){
+ return String(s).replace(/[&<>"']/g,c=>({
+  '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+ }[c]));
+}
+
+function setPhase(title,desc){
+ $('phaseTitle').textContent=title;
+ $('phaseDesc').textContent=desc;
+}
+
+function roleText(p){
+ let r=roleInfo[p.role],extras='';
+ if(p.role==='Merlin'){
+  let seen=G.players.filter(x=>roleInfo[x.role].team==='evil'&&x.role!=='Mordred').map(x=>x.name);
+  extras='<p><b>Pemain jahat yang kamu lihat:</b> '+(seen.join(', ')||'Tidak ada')+'</p>';
+ }
+ if(p.role==='Percival'){
+  let cand=G.players.filter(x=>['Merlin','Morgana'].includes(x.role)).map(x=>x.name);
+  extras='<p><b>Kandidat Merlin:</b> '+cand.join(' dan ')+'</p>';
+ }
+ if(r.team==='evil'){
+  let mates=G.players.filter(x=>roleInfo[x.role].team==='evil'&&x!==p).map(x=>x.name);
+  extras='<p><b>Rekan kubu jahat:</b> '+(mates.join(', ')||'Tidak ada')+'</p>';
+ }
+ return `<strong>${p.role}</strong> <span class="pill ${r.team}">${r.team==='good'?'KUBU BAIK':'KUBU JAHAT'}</span><p>${r.desc}</p>${extras}`;
+}
+
+function render(){
+ if(!G)return;
+ const area=$('mainArea');
+ area.innerHTML='';
+ $('roleReveal').classList.add('hidden');
+
+ if(G.phase==='reveal'){
+  setPhase('Pembagian Peran',`Pemain ${G.revealIndex+1} dari ${G.n}.`);
+  let p=G.players[G.revealIndex];
+  area.innerHTML=`<div class="status"><b>Giliran:</b> ${esc(p.name)}<p class="muted">Pastikan pemain lain tidak melihat layar.</p></div><button class="btn" id="showRole">Lihat Peran Saya</button>`;
+  $('showRole').onclick=()=>{
+   let r=$('roleReveal');
+   r.innerHTML=roleText(p);
+   r.classList.remove('hidden');
+   area.innerHTML=`<p>Hafalkan peranmu dan sembunyikan layar.</p><button class="btn" id="hideRole">${G.revealIndex===G.n-1?'Mulai Permainan':'Pemain Berikutnya'}</button>`;
+   $('hideRole').onclick=()=>{
+    G.revealIndex++;
+    if(G.revealIndex>=G.n){G.phase='team';G.revealIndex=0}
+    render();
+   };
+  };
+ }
+
+ else if(G.phase==='team'){
+  let r=G.round;
+  setPhase(`Ronde ${r+1} — Pilih Tim`,`${G.players[G.leader].name} adalah Raja. Pilih ${missionSizes[r]} pemain.`);
+  area.innerHTML=`<div class="rounds">${G.missionResults.map((x,i)=>`<div class="round ${x===1?'success':'fail'}"><b>${i+1}</b>${x===1?'Berhasil':'Gagal'}</div>`).join('')}${Array.from({length:5-G.missionResults.length},(_,i)=>`<div class="round ${i===0?'active':''}"><b>${G.missionResults.length+i+1}</b>Menunggu</div>`).join('')}</div><p>Pilih anggota tim (${G.team.length}/${missionSizes[r]}).</p><div class="players" id="teamPlayers"></div><button class="btn" id="submitTeam" disabled>Ajukan Tim</button>`;
+  let pp=$('teamPlayers');
+  G.players.forEach((p,i)=>{
+   let d=document.createElement('label');
+   d.className='player '+(G.team.includes(i)?'selected':'');
+   d.innerHTML=`<input type="checkbox" ${G.team.includes(i)?'checked':''}><span>${esc(p.name)}</span>${i===G.leader?'<br><small>RAJA</small>':''}`;
+   d.querySelector('input').onchange=e=>{
+    if(e.target.checked){
+     if(G.team.length>=missionSizes[r]){e.target.checked=false;return}
+     G.team.push(i);
+    }else G.team=G.team.filter(x=>x!==i);
+    render();
+   };
+   pp.appendChild(d);
+  });
+  $('submitTeam').disabled=G.team.length!==missionSizes[r];
+  $('submitTeam').onclick=()=>{G.votes=[];G.voteIndex=0;G.phase='vote';render()};
+ }
+
+ else if(G.phase==='vote'){
+  setPhase(`Ronde ${G.round+1} — Voting`,`Tim: ${G.team.map(i=>G.players[i].name).join(', ')}`);
+  privateTurn('vote','Setujui tim ini?','Setuju','Tolak');
+ }
+
+ else if(G.phase==='mission'){
+  setPhase(`Ronde ${G.round+1} — Misi`,'Anggota tim memilih secara rahasia.');
+  privateTurn('mission','Pilih hasil misi','Berhasil','Sabotase');
+ }
+
+ else if(G.phase==='result'){
+  setPhase(`Hasil Ronde ${G.round+1}`,G.lastResult);
+  area.innerHTML=`<div class="status"><h3>${G.lastResult}</h3><p>${G.success} misi berhasil · ${G.fail} misi gagal</p></div><button class="btn" id="nextRound">Lanjut</button>`;
+  $('nextRound').onclick=()=>{
+   if(G.success>=3){G.phase='assassin';render()}
+   else if(G.fail>=3){finish('Kubu JAHAT menang karena 3 misi gagal.')}
+   else{
+    G.round++;
+    G.leader=nextLeader(G.leader);
+    G.team=[];
+    G.rejections=0;
+    G.phase='team';
+    render();
+   }
+  };
+ }
+
+ else if(G.phase==='assassin'){
+  setPhase('Tebakan Assassin','Assassin memilih pemain yang dianggap Merlin.');
+  area.innerHTML=`<div class="status">Berikan perangkat kepada Assassin secara pribadi.</div><label class="field">Target tebakan<select id="guess">${G.players.map((p,i)=>`<option value="${i}">${esc(p.name)}</option>`).join('')}</select></label><button class="btn danger" id="guessBtn">Kunci Tebakan</button>`;
+  $('guessBtn').onclick=()=>{
+   let i=+$('guess').value;
+   finish(G.players[i].role==='Merlin'?`Kubu JAHAT menang! Assassin menebak Merlin (${G.players[i].name}).`:'Kubu BAIK menang! Assassin salah menebak Merlin.');
+  };
+ }
+
+ else if(G.phase==='end'){
+  setPhase('Permainan Selesai','Hasil akhir permainan.');
+  area.innerHTML=`<div class="status"><h3>${esc(G.endMessage)}</h3><p>${G.success} misi berhasil · ${G.fail} misi gagal</p></div><h3>Identitas Pemain</h3><div class="players">${G.players.map(p=>`<div class="player">${esc(p.name)}<br><span class="pill ${roleInfo[p.role].team}">${esc(p.role)}</span></div>`).join('')}</div><button class="btn" id="newGame">Permainan Baru</button>`;
+  $('newGame').onclick=()=>{
+   G=null;
+   $('game').classList.add('hidden');
+   $('setup').classList.remove('hidden');
+  };
+ }
+ updateScore();
+}
+
+function privateTurn(kind,prompt,a,b){
+ let area=$('mainArea');
+ let index=kind==='vote'?G.voteIndex:G.missionIndex;
+ let participant=kind==='vote'?G.players[index]:G.players[G.team[index]];
+ area.innerHTML=`<div class="status"><b>Serahkan perangkat kepada:</b> ${esc(participant.name)}<p class="muted">Jangan perlihatkan pilihanmu kepada pemain lain.</p></div><button class="btn" id="turnBtn">Lanjut sebagai ${esc(participant.name)}</button>`;
+ $('turnBtn').onclick=()=>{
+  let canSab=kind!=='mission'||roleInfo[participant.role].team==='evil';
+  area.innerHTML=`<div class="rolebox"><b>${esc(participant.name)}</b><p>${prompt}</p><div class="vote-row"><button class="btn" id="choiceA">${a}</button><button class="btn secondary" id="choiceB" ${kind==='mission'&&!canSab?'disabled':''}>${b}</button></div>${kind==='mission'&&!canSab?'<p class="muted">Kubu baik hanya dapat memilih Berhasil.</p>':''}</div>`;
+  $('choiceA').onclick=()=>record(kind,true);
+  $('choiceB').onclick=()=>record(kind,false);
+ };
+}
+
+function record(kind,val){
+ if(kind==='vote'){
+  G.votes.push(val);
+  G.voteIndex++;
+  if(G.voteIndex<G.n){render();return}
+  let yes=G.votes.filter(Boolean).length;
+  if(yes>G.n/2){
+   G.missionVotes=[];
+   G.missionIndex=0;
+   G.phase='mission';
+  }else{
+   G.rejections++;
+   if(G.rejections>=5){finish('Kubu JAHAT menang karena lima tim berturut-turut ditolak.');return}
+   G.leader=nextLeader(G.leader);
+   G.team=[];
+   G.phase='team';
+  }
+  render();
+ }else{
+  let p=G.players[G.team[G.missionIndex]];
+  G.missionVotes.push(roleInfo[p.role].team==='evil'&&!val?false:true);
+  G.missionIndex++;
+  if(G.missionIndex<G.team.length){render();return}
+  let sabotages=G.missionVotes.filter(x=>!x).length;
+  let failed=sabotages>=sabotageNeeded[G.round];
+  G.missionResults.push(failed?0:1);
+  if(failed)G.fail++;else G.success++;
+  G.lastResult=failed?`Misi GAGAL — ${sabotages} sabotase.`:`Misi BERHASIL — ${sabotages} sabotase.`;
+  G.phase='result';
+  render();
+ }
+}
+
+function updateScore(){
+ $('scoreArea').innerHTML=`<b>Skor:</b> ${G.success} berhasil · ${G.fail} gagal<br><span class="muted">Raja saat ini: ${esc(G.players[G.leader].name)}</span>`;
+}
+
+function finish(msg){
+ G.endMessage=msg;
+ G.phase='end';
+ render();
+}
+
+$('startBtn').onclick=startGame;
+$('rulesBtn').onclick=()=>$('rules').classList.toggle('hidden');
+$('restartBtn').onclick=()=>{
+ if(confirm('Mulai ulang permainan?')){
+  G=null;
+  $('game').classList.add('hidden');
+  $('setup').classList.remove('hidden');
+ }
+};
+</script>
+</body>
+</html>
